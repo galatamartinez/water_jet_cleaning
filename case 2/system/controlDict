@@ -1,0 +1,236 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2406                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      controlDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+application     interFoam;
+
+startFrom       latestTime;
+
+startTime       0;
+
+stopAt          endTime;
+
+endTime         2e-02;
+
+deltaT          0.6e-06;
+
+writeControl    adjustable;
+
+writeInterval   2e-04;
+
+purgeWrite      0;
+
+writeFormat     binary;
+
+writePrecision  8;
+
+writeCompression off;
+
+timeFormat      general;
+
+timePrecision   6;
+
+runTimeModifiable yes;
+
+adjustTimeStep  yes;
+
+maxCo           0.5;
+
+maxAlphaCo      0.5;
+
+maxDeltaT       2e-06;
+
+functions
+{
+    // Wedge correction factor: 360° / (2 * wedgeHalfAngle)
+    // From blockMeshDict: z = ±4.366 at y = 100, so tan(angle) = 4.366/100
+    // Half-angle ≈ 2.5°, full wedge angle ≈ 5°
+    // Correction factor = 360 / 5 = 72
+    
+    // Calculate pressure force at inlet (scaled for full nozzle)
+    inletPressureForce
+    {
+        type            surfaceFieldValue;
+        libs            (fieldFunctionObjects);
+        writeControl    timeStep;
+        writeInterval   1;
+        log             true;
+        writeFields     false;
+        regionType      patch;
+        name            inlet;
+        operation       sum;
+        weightField     none;
+        fields          (p_rgh);
+        scaleFactor     72;         // Wedge correction: 360°/5° = 72
+    }
+
+    // For proper force calculation on inlet patch
+    // Note: This gives pressure + viscous forces on the patch surface
+    // For total jet force, add the momentum flux from inletMomentumFlux
+    inletForces
+    {
+        type            forces;
+        libs            (forces);
+        writeControl    timeStep;
+        writeInterval   1;
+        log             true;
+        
+        patches         (inlet);
+        
+        // Reference values for force coefficients
+        rho             rhoInf;
+        rhoInf          1000;       // fuel density
+        
+        CofR            (0 0 0);    // Center of rotation
+        
+        // Wedge correction: multiply output by 72 (360°/5°) for full nozzle
+        // Total jet force = (inletForces + inletMomentumFlux) * 72
+    }
+
+    // Calculate momentum flux at inlet (scaled for full nozzle)
+    // Writes all force data to a single file: postProcessing/jetForces.dat
+    inletMomentumFlux
+    {
+        type            coded;
+        libs            (utilityFunctionObjects);
+        name            calcMomentumFlux;
+        writeControl    timeStep;
+        writeInterval   1;
+        
+        codeInclude
+        #{
+            #include <fstream>
+            #include <sys/stat.h>
+        #};
+        
+        codeExecute
+        #{
+            // Get mesh and fields
+            const fvMesh& mesh = refCast<const fvMesh>(obr_);
+            const volVectorField& U = mesh.lookupObject<volVectorField>("U");
+            const volScalarField& alpha = mesh.lookupObject<volScalarField>("alpha.fuel");
+            const surfaceScalarField& phi = mesh.lookupObject<surfaceScalarField>("phi");
+            const volScalarField& p = mesh.lookupObject<volScalarField>("p_rgh");
+            
+            // Density values
+            scalar rhoFuel = 1000.0;
+            scalar rhoAir = 20.0;
+            
+            // Wedge correction factor
+            scalar wedgeFactor = 72.0;
+            
+            // Get inlet patch
+            label patchI = mesh.boundaryMesh().findPatchID("inlet");
+            const fvPatch& patch = mesh.boundary()[patchI];
+            
+            // Get face values
+            const vectorField& Sf = patch.Sf();
+            const scalarField& magSf = patch.magSf();
+            const scalarField& phip = phi.boundaryField()[patchI];
+            const vectorField& Up = U.boundaryField()[patchI];
+            const scalarField& alphap = alpha.boundaryField()[patchI];
+            const scalarField& pp = p.boundaryField()[patchI];
+            
+            // Calculate forces
+            scalar massFlow = 0.0;
+            vector momentumFlux = vector::zero;
+            vector pressureForce = vector::zero;
+            scalar inletArea = 0.0;
+            
+            forAll(patch, faceI)
+            {
+                scalar rho = alphap[faceI]*rhoFuel + (1.0 - alphap[faceI])*rhoAir;
+                scalar mDot = rho * phip[faceI];
+                massFlow += mDot;
+                momentumFlux += mDot * Up[faceI];
+                pressureForce += pp[faceI] * Sf[faceI];
+                inletArea += magSf[faceI];
+            }
+            
+            // Apply wedge correction
+            scalar massFlowFull = massFlow * wedgeFactor;
+            vector momentumFluxFull = momentumFlux * wedgeFactor;
+            vector pressureForceFull = pressureForce * wedgeFactor;
+            scalar inletAreaFull = inletArea * wedgeFactor;
+            
+            // Total force (momentum + pressure)
+            vector totalForce = momentumFluxFull + pressureForceFull;
+            
+            // Output file path
+            fileName outputFile = mesh.time().path()/"postProcessing"/"jetForces.dat";
+            
+            // Create postProcessing directory if needed
+            mkDir(mesh.time().path()/"postProcessing");
+            
+            // Check if file exists using stat
+            struct stat buffer;
+            bool fileExists = (stat(outputFile.c_str(), &buffer) == 0);
+            
+            // Open file in append mode
+            std::ofstream file(outputFile.c_str(), std::ios::app);
+            
+            if (!fileExists)
+            {
+                file << "# Jet Force Analysis - OpenFOAM Post-Processing\n";
+                file << "# Wedge factor: " << wedgeFactor << "\n";
+                file << "# Fuel density: " << rhoFuel << " kg/m3\n";
+                file << "# Air density: " << rhoAir << " kg/m3\n";
+                file << "# Inlet area (full): " << inletAreaFull << " m2\n";
+                file << "#\n";
+                file << "# Time(s)  MassFlow(kg/s)  MomentumFlux_x(N)  PressureForce_x(N)  TotalForce_x(N)\n";
+            }
+            
+            file << mesh.time().value() << "  "
+                 << massFlowFull << "  "
+                 << momentumFluxFull.x() << "  "
+                 << pressureForceFull.x() << "  "
+                 << totalForce.x() << "\n";
+            
+            file.close();
+        #};
+    }
+
+    // Total jet force function object (pressure + momentum flux)
+    // For jet force: F_total = F_pressure + F_momentum
+    // F_pressure from inletPressureForce (sum of p*A)
+    // F_momentum from inletMomentumFlux (sum of rho*U^2*A, x-component)
+    // Both are already scaled by 72 for full nozzle
+    // 
+    // Expected value for 1mm hose, U=60 m/s, rho=1000 kg/m³:
+    // F_momentum = rho * A * U^2 = 1000 * pi*(0.0005)^2 * 60^2 ≈ 2.83 N
+    
+    // Calculate mass flow rate at inlet (scaled for full nozzle)
+    // Note: Mass flow is now calculated in the coded inletMomentumFlux function
+    // This is kept for reference but uses phi (volumetric flux)
+    inletMassFlow
+    {
+        type            surfaceFieldValue;
+        libs            (fieldFunctionObjects);
+        writeControl    timeStep;
+        writeInterval   1;
+        log             true;
+        writeFields     false;
+        regionType      patch;
+        name            inlet;
+        operation       sum;
+        weightField     none;
+        fields          (phi);      // volumetric flux - multiply by ~1000 for mass flux
+        scaleFactor     72;         // Wedge correction: 360°/5° = 72
+    }
+}
+
+// 4************************************************************************* //
+
+
