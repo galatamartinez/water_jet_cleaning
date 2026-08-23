@@ -1,1 +1,0 @@
-LIB = $(PWD)/../platforms/$(WM_OPTIONS)/lib/libdivergentInlet_7ad30d6f584b4c58dc590a061e1a5bcf243c8f7a
