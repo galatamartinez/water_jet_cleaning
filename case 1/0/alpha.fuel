@@ -28,7 +28,7 @@ boundaryField
     inlet
     {
         type            fixedValue;
-        value           uniform 0.98;
+        value           uniform 1;
     }
 
     walls
