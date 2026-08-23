@@ -1,0 +1,6 @@
+/* dynamicCode:
+ * SHA1 = abfc31efdfbd2a6024ac00b9190abb344a2a73c7
+ */
+fixedValueFvPatchFieldTemplate.C
+
+LIB = $(PWD)/../platforms/$(WM_OPTIONS)/lib/libdivergentInlet_abfc31efdfbd2a6024ac00b9190abb344a2a73c7
