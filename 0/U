@@ -1,0 +1,80 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2406                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volVectorField;
+    object      U;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+dimensions      [0 1 -1 0 0 0 0];
+
+internalField   uniform (0 0 0);
+
+boundaryField
+{
+    axis
+    {
+        type            empty;
+    }
+
+inlet
+{
+    type            codedFixedValue;
+    value           uniform (0 0 0);  // initial value
+    name            divergentInlet;   // <-- ADD THIS LINE
+    
+    code
+    #{
+        const fvPatch& patch = this->patch();
+        vectorField& field = *this;
+        vector center(0, 0, 0); // center of inlet in y-z plane
+        scalar R = 0.000495; // nozzle radius
+
+        forAll(patch, i)
+        {
+            vector pos = patch.Cf()[i] - center;
+
+            // x-component along main flow
+            scalar u =  170.0 * pow(1.0 - pos.y()/R, 1.0/7.0);
+
+
+
+            field[i] = vector(u, 0, 0);
+        }
+    #};
+}
+
+   
+
+    walls
+    {
+        type            noSlip;
+    }
+
+    atmosphere
+    {
+        type            pressureInletOutletVelocity;
+        value           uniform (0 0 0);
+    }
+
+    front
+    {
+        type            wedge;
+    }
+
+    back
+    {
+        type            wedge;
+    }
+}
+
+
+// ************************************************************************* //
