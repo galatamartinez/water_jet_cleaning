@@ -126,7 +126,7 @@ functions
             
             // Density values
             scalar rhoFuel = 1000.0;
-            scalar rhoAir = 20.0;
+            scalar rhoAir = 1.225;
             
             // Wedge correction factor
             scalar wedgeFactor = 72.0;
